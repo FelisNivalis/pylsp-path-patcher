@@ -1,5 +1,6 @@
 import logging
 import os
+import shlex
 import pathlib
 import subprocess
 from functools import lru_cache
@@ -24,17 +25,24 @@ class PathPatcherConfig(ConfigSource):
     @lru_cache(maxsize=32)
     def project_config(self, document_path):
         files = find_parents(self.root_path, document_path, PROJECT_CONFIGS)
-        in_project = len(files) > 0
+        in_project = 1 if len(files) > 0 else 0
         project_path = str(
             pathlib.Path((files or [document_path])[0]).parent.absolute()
         )
         log.debug(f"project_config({document_path=}): {project_path=}")
         package_path = (
             subprocess.run(
-                [
-                    str((pathlib.Path(__file__) / ".." / "python_prefix.sh").resolve()),
-                    "1" if in_project else "0",
-                ],
+                shlex.split(
+                    f"""bash -c '
+set -e
+VENV_PREFIX=$(([[ {in_project} > 0 ]] && poetry env info --path 2>/dev/null) || \
+	([[ {in_project} > 0 ]] && pipenv --venv 2>/dev/null) || \
+	(pyenv prefix 2>/dev/null) || \
+	echo $VIRTUAL_ENV)
+if [[ -n $VENV_PREFIX ]]; then
+	$VENV_PREFIX/bin/python -c "import site; print(site.getsitepackages()[0])"
+fi'"""
+                ),
                 cwd=project_path,
                 env=os.environ | {"PYENV_VERSION": ""},
                 capture_output=True,
